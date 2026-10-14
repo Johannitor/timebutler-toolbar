@@ -44,6 +44,7 @@ final class MockTimeClockAPI: TimeClockAPI, Sendable {
         var stop: [Result<StopResult, APIError>] = [.success(.saved(workedMinutes: 60, breakMinutes: 0))]
         var profile: Result<UserProfileResponse, APIError> = .success(UserProfileResponse(name: "Max Mustermann", isTimeTrackingEnabled: true))
         var summary: Result<WorkSummaryResponse, APIError> = .success(WorkSummaryResponse(commitmentMinutes: 420, workedMinutes: 100, breakMinutes: 30))
+        var entries: Result<[TimeEntryDto], APIError> = .success([])
         var calls: [String] = []
         var statusDelay: Duration?
     }
@@ -79,6 +80,7 @@ final class MockTimeClockAPI: TimeClockAPI, Sendable {
         return try state.withLock { $0.profile }.get()
     }
     func workSummary() async throws -> WorkSummaryResponse { record("summary"); return try state.withLock { $0.summary }.get() }
+    func timeEntries() async throws -> [TimeEntryDto] { record("entries"); return try state.withLock { $0.entries }.get() }
 }
 
 final class InMemoryTokenStore: TokenStore, Sendable {

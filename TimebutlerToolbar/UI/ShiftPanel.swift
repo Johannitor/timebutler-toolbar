@@ -16,13 +16,19 @@ struct ShiftPanel: View {
                 } else {
                     Text("Lade Status…").foregroundStyle(.secondary)
                 }
-                if let totals = TodayTotals(summary: store.workSummary, snapshot: store.snapshot, now: store.now) {
-                    Divider()
-                    TodaySection(totals: totals)
-                }
                 Divider()
                 ActionSection()
                 MessageSection(openSettings: openSettings)
+                if let totals = TodayTotals(summary: store.workSummary, snapshot: store.snapshot, now: store.now) {
+                    Divider()
+                    TodaySection(
+                        totals: totals,
+                        timeline: DayTimeline(
+                            entries: store.timeEntries, snapshot: store.snapshot,
+                            summary: store.workSummary, now: store.now
+                        )
+                    )
+                }
             }
             Divider()
             FooterSection(openSettings: openSettings)
@@ -123,25 +129,36 @@ private struct TimeSection: View {
 
     var body: some View {
         if snapshot.isActive {
-            VStack(alignment: .leading, spacing: 10) {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(DurationFormatting.hmmss(snapshot.netWork(at: now)))
-                        .font(.system(size: 38, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                    Text(caption).font(.caption).foregroundStyle(.secondary)
+            let paused = snapshot.status == .paused
+            // Each counter carries its own details; the running one is large, the other stays small.
+            VStack(alignment: .leading, spacing: 8) {
+                counter(
+                    "clock.fill", DurationFormatting.hmmss(snapshot.netWork(at: now)),
+                    active: !paused, label: "Arbeitszeit"
+                ) {
+                    if let start = snapshot.shiftStart {
+                        detail(.label("Eingestempelt seit "), .value(DurationFormatting.clockTime(start)))
+                    }
+                    if let wait = snapshot.waitRemaining(at: now) {
+                        detail(.label("Wartezeit "), .value(DurationFormatting.mss(wait)))
+                    }
                 }
-                // Totals (breaks, gross) are shown in "Heute"; only the live break/wait state is listed here.
-                if snapshot.status == .paused || snapshot.waitRemaining(at: now) != nil {
-                    Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 4) {
-                        if snapshot.status == .paused {
-                            let since = snapshot.breakStart.map { DurationFormatting.clockTime($0) + " " } ?? ""
-                            row("In Pause seit", "\(since)(\(DurationFormatting.mss(snapshot.currentBreak(at: now))))")
+                counter(
+                    "cup.and.heat.waves.fill", DurationFormatting.hmmss(snapshot.totalBreak(at: now)),
+                    active: paused, label: "Pause"
+                ) {
+                    if paused {
+                        if let since = snapshot.breakStart {
+                            detail(
+                                .label("In Pause seit "), .value(DurationFormatting.clockTime(since)),
+                                .label(" ("), .value(DurationFormatting.mss(snapshot.currentBreak(at: now))), .label(")")
+                            )
                         }
-                        if snapshot.status == .paused, let end = autoBreakEnd {
-                            row("Endet automatisch", "\(DurationFormatting.clockTime(end)) (noch \(DurationFormatting.mss(max(0, end.timeIntervalSince(now)))))")
-                        }
-                        if let wait = snapshot.waitRemaining(at: now) {
-                            row("Wartezeit", DurationFormatting.mss(wait))
+                        if let end = autoBreakEnd {
+                            detail(
+                                .label("Endet automatisch "), .value(DurationFormatting.clockTime(end)),
+                                .label(" (noch "), .value(DurationFormatting.mss(max(0, end.timeIntervalSince(now)))), .label(")")
+                            )
                         }
                     }
                 }
@@ -151,46 +168,164 @@ private struct TimeSection: View {
         }
     }
 
-    private var caption: String {
-        guard let start = snapshot.shiftStart else { return "Arbeitszeit" }
-        return "Arbeitszeit seit \(DurationFormatting.clockTime(start))"
+    private static let iconWidth: CGFloat = 30
+    private static let iconSpacing: CGFloat = 8
+
+    private func counter(
+        _ symbol: String, _ value: String, active: Bool, label: String,
+        @ViewBuilder details: () -> some View
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(alignment: .firstTextBaseline, spacing: Self.iconSpacing) {
+                Image(systemName: symbol)
+                    .font(.system(size: active ? 24 : 14, weight: .semibold))
+                    .frame(width: Self.iconWidth, alignment: .center)
+                Text(value)
+                    .font(.system(size: active ? 38 : 20, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+            }
+            .foregroundStyle(active ? .primary : .secondary)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(label) \(value)")
+            // Details align with the value, not the icon.
+            VStack(alignment: .leading, spacing: 1) { details() }
+                .padding(.leading, Self.iconWidth + Self.iconSpacing)
+        }
     }
 
-    private func row(_ label: String, _ value: String) -> some View {
-        GridRow {
-            Text(label).foregroundStyle(.secondary)
-            Text(value).monospacedDigit().gridColumnAlignment(.trailing)
+    private func detail(_ parts: StyledPart...) -> some View {
+        styledText(parts).font(.callout)
+    }
+}
+
+/// A piece of a mixed label/value line: labels are secondary, values primary for readability.
+private enum StyledPart {
+    case label(String)
+    case value(String)
+}
+
+private func styledText(_ parts: [StyledPart]) -> Text {
+    parts.reduce(Text("")) { text, part in
+        switch part {
+        case .label(let string): text + Text(string).foregroundStyle(.secondary)
+        case .value(let string): text + Text(string).foregroundStyle(.primary).monospacedDigit()
         }
-        .font(.callout)
     }
 }
 
 private struct TodaySection: View {
     let totals: TodayTotals
+    let timeline: DayTimeline?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Heute").font(.subheadline.weight(.semibold))
-            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 4) {
-                row("Gearbeitet", DurationFormatting.hmm(totals.workedSeconds))
-                row("Soll", DurationFormatting.hmm(totals.targetSeconds))
-                if totals.overtimeSeconds > 0 {
-                    row("Überstunden", DurationFormatting.hmm(totals.overtimeSeconds))
-                } else {
-                    row("Rest", DurationFormatting.hmm(totals.remainingSeconds))
-                }
-                row("Pausen heute", DurationFormatting.hmm(totals.breakSeconds))
+            VStack(spacing: 4) {
+                row("Gearbeitet", workedParts)
+                row("Pausen heute", [.value(DurationFormatting.hmm(totals.breakSeconds))])
             }
-            ProgressView(value: totals.progress)
+            .font(.callout)
+            if let timeline { DayTimelineBar(timeline: timeline) }
         }
     }
 
-    private func row(_ label: String, _ value: String) -> some View {
-        GridRow {
+    /// Label on the left edge, value on the right edge.
+    private func row(_ label: String, _ value: [StyledPart]) -> some View {
+        HStack {
             Text(label).foregroundStyle(.secondary)
-            Text(value).monospacedDigit().gridColumnAlignment(.trailing)
+            Spacer(minLength: 8)
+            styledText(value)
         }
-        .font(.callout)
+    }
+
+    /// "5:22 von 7:00 (1:47 Rest)", or overtime instead of the rest.
+    private var workedParts: [StyledPart] {
+        let over = totals.overtimeSeconds > 0
+        return [
+            .value(DurationFormatting.hmm(totals.workedSeconds)),
+            .label(" von "),
+            .value(DurationFormatting.hmm(totals.targetSeconds)),
+            .label(" ("),
+            .value(DurationFormatting.hmm(over ? totals.overtimeSeconds : totals.remainingSeconds)),
+            .label(over ? " Überstunden)" : " Rest)"),
+        ]
+    }
+}
+
+/// Today as a bar: work, breaks and untracked gaps, from the first clock-in to the planned end
+/// (or beyond it, with a marker at the planned end).
+private struct DayTimelineBar: View {
+    let timeline: DayTimeline
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            GeometryReader { proxy in
+                let width = proxy.size.width
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3).fill(.quaternary)
+                    ForEach(Array(timeline.segments.enumerated()), id: \.offset) { _, segment in
+                        let x = timeline.fraction(segment.start) * width
+                        Rectangle()
+                            .fill(Self.color(segment.kind))
+                            .frame(width: max(1, timeline.fraction(segment.end) * width - x))
+                            .offset(x: x)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 3))
+                .overlay(alignment: .leading) {
+                    if timeline.isOverrun {
+                        Rectangle()
+                            .fill(.primary)
+                            .frame(width: 2, height: 14)
+                            .offset(x: timeline.fraction(timeline.plannedEnd) * width - 1)
+                            .help("Soll inkl. Pause erreicht um \(DurationFormatting.clockTime(timeline.plannedEnd))")
+                    }
+                }
+            }
+            .frame(height: 8)
+            HStack {
+                Text(DurationFormatting.clockTime(timeline.start))
+                Spacer()
+                legend
+                Spacer()
+                Text(DurationFormatting.clockTime(timeline.end))
+            }
+            .font(.caption2)
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+        }
+        .padding(.top, 4)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "Tagesverlauf von \(DurationFormatting.clockTime(timeline.start)) bis \(DurationFormatting.clockTime(timeline.end))"
+        )
+    }
+
+    private var legend: some View {
+        HStack(spacing: 8) {
+            ForEach([DayTimeline.Kind.work, .pause, .untracked], id: \.self) { kind in
+                HStack(spacing: 3) {
+                    Circle().fill(Self.color(kind)).frame(width: 6, height: 6)
+                    Text(Self.title(kind))
+                }
+            }
+        }
+    }
+
+    private static func color(_ kind: DayTimeline.Kind) -> Color {
+        switch kind {
+        case .work: .green
+        case .pause: .orange
+        case .untracked: .gray.opacity(0.45)
+        }
+    }
+
+    private static func title(_ kind: DayTimeline.Kind) -> String {
+        switch kind {
+        case .work: "Arbeit"
+        case .pause: "Pause"
+        case .untracked: "Ohne Erfassung"
+        }
     }
 }
 

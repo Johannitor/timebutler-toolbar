@@ -12,6 +12,8 @@ protocol TimeClockAPI: Sendable {
     /// Fetches the profile. `token` overrides the stored token (used to validate a candidate token).
     func profile(token: String?) async throws -> UserProfileResponse
     func workSummary() async throws -> WorkSummaryResponse
+    /// Saved time entries of the current month.
+    func timeEntries() async throws -> [TimeEntryDto]
 }
 
 /// Performs a request. Abstracted so tests never touch the network.
@@ -79,6 +81,10 @@ struct TimebutlerClient: TimeClockAPI {
 
     func workSummary() async throws -> WorkSummaryResponse {
         try await decoded(.get, "time-tracking/work-summary", context: .read)
+    }
+
+    func timeEntries() async throws -> [TimeEntryDto] {
+        try await decoded(.get, "time-entries/my", context: .read)
     }
 
     func stop(breakRegulation: BreakRegulation?) async throws -> StopResult {

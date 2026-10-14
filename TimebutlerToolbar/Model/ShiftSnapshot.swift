@@ -74,5 +74,4 @@ struct TodayTotals: Equatable {
 
     var remainingSeconds: TimeInterval { max(0, targetSeconds - workedSeconds) }
     var overtimeSeconds: TimeInterval { max(0, workedSeconds - targetSeconds) }
-    var progress: Double { targetSeconds > 0 ? min(1, workedSeconds / targetSeconds) : 0 }
 }

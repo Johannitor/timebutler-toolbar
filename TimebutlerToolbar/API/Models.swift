@@ -49,6 +49,19 @@ extension TimeClockStatusDto: Decodable {
     }
 }
 
+/// `TimeEntryDto`, reduced to the fields the day timeline needs.
+struct TimeEntryDto: Sendable, Equatable, Decodable {
+    /// `YYYY-MM-DD`
+    var date: String?
+    /// `HH:mm`; `nil` for entries recorded as a plain duration.
+    var startTime: String?
+    var endTime: String?
+    var workedMinutes: Int?
+    var breakMinutes: Int?
+    /// `done`, `pending`, `approved`, `rejected` or `editing`.
+    var status: String?
+}
+
 struct UserProfileResponse: Sendable, Equatable, Decodable {
     var id: String?
     var name: String?

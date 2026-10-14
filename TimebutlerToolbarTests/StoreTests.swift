@@ -230,7 +230,7 @@ struct StoreTests {
         await store.clockOut()
         #expect(store.pendingAction == nil)
         #expect(store.transientMessage == "Gespeichert: 7:32 h Arbeit, 0:45 h Pause")
-        #expect(api.calls == ["stop:none", "status", "summary"])
+        #expect(api.calls == ["stop:none", "status", "summary", "entries"])
         #expect(store.snapshot?.status == .idle)
     }
 
@@ -278,7 +278,7 @@ struct StoreTests {
     @Test func cancelShiftDiscardsAndRefreshesSummary() async {
         let store = makeStore()
         await store.cancelShift()
-        #expect(api.calls == ["cancel", "summary"])
+        #expect(api.calls == ["cancel", "summary", "entries"])
         #expect(store.snapshot?.status == .idle)
     }
 

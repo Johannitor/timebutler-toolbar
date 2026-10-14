@@ -160,3 +160,15 @@ struct StopFlowTests {
         await #expect(throws: APIError.decoding) { try await client.stop(breakRegulation: nil) }
     }
 }
+
+struct TimeEntriesClientTests {
+    @Test func decodesTimeEntries() async throws {
+        let log = RequestLog()
+        let body = #"[{"id":"98765","date":"2025-07-28","startTime":"08:00","endTime":"17:00","workedMinutes":480,"breakMinutes":60,"status":"done","autoStopped":false},{"id":"1","date":"2025-07-28","startTime":null,"endTime":null,"workedMinutes":60,"breakMinutes":0,"status":"pending"}]"#
+        let entries = try await makeClient(body: body, log: log).timeEntries()
+        #expect(entries.count == 2)
+        #expect(entries[0] == TimeEntryDto(date: "2025-07-28", startTime: "08:00", endTime: "17:00", workedMinutes: 480, breakMinutes: 60, status: "done"))
+        #expect(entries[1].startTime == nil)
+        #expect(log.last?.url?.absoluteString == "https://app.timebutler.com/api/v2/time-entries/my")
+    }
+}

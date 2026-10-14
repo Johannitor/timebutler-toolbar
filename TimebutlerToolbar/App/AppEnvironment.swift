@@ -51,4 +51,5 @@ private struct InertAPI: TimeClockAPI {
     func cancel() async throws -> TimeClockStatusDto { throw APIError.noToken }
     func profile(token: String?) async throws -> UserProfileResponse { throw APIError.noToken }
     func workSummary() async throws -> WorkSummaryResponse { throw APIError.noToken }
+    func timeEntries() async throws -> [TimeEntryDto] { throw APIError.noToken }
 }

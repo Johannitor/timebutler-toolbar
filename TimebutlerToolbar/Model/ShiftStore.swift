@@ -31,6 +31,8 @@ final class ShiftStore {
     private(set) var snapshot: ShiftSnapshot?
     private(set) var profileName: String?
     private(set) var workSummary: WorkSummaryResponse?
+    /// Saved time entries of the current month (for the day timeline).
+    private(set) var timeEntries: [TimeEntryDto] = []
     private(set) var isBusy = false
     private(set) var lastError: APIError? { didSet { updateMenuBar() } }
     private(set) var transientMessage: String?
@@ -299,6 +301,7 @@ final class ShiftStore {
             // The target reminder depends on today's saved work.
             updateReminders()
         }
+        if let entries = try? await api.timeEntries(), entries != timeEntries { timeEntries = entries }
     }
 
     func refreshProfile() async {
@@ -495,6 +498,7 @@ final class ShiftStore {
         snapshot = nil
         profileName = nil
         workSummary = nil
+        timeEntries = []
         pendingConfirmation = nil
         pendingAction = nil
         lastError = nil

@@ -134,7 +134,6 @@ struct SnapshotTests {
         #expect(totals.overtimeSeconds == 0)
         let over = try #require(TodayTotals(summary: WorkSummaryResponse(commitmentMinutes: 420, workedMinutes: 467), snapshot: nil, now: referenceDate))
         #expect(over.overtimeSeconds == 47 * 60)
-        #expect(over.progress == 1)
         #expect(TodayTotals(summary: nil, snapshot: s, now: referenceDate) == nil)
     }
 }
@@ -269,5 +268,82 @@ struct ShiftEndPlanTests {
         #expect(plan(makeDTO(.paused, work: 3600)).isEmpty)
         #expect(plan(makeDTO(.running, work: 3600), targetEnabled: false, maxEnabled: false).isEmpty)
         #expect(plan(makeDTO(.running, work: 3600), targetEnabled: false).map(\.id) == ["shift-10h-1000000"])
+    }
+}
+
+struct DayTimelineTests {
+    /// `referenceDate` is 2027-01-15 08:00 UTC.
+    private static let calendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }()
+
+    private func at(_ hour: Double) -> Date { referenceDate.addingTimeInterval((hour - 8) * 3600) }
+    private func millis(_ hour: Double) -> Int64 { Int64(at(hour).timeIntervalSince1970 * 1000) }
+
+    private func entry(_ start: String, _ end: String, pause: Int = 0, date: String = "2027-01-15", status: String = "done") -> TimeEntryDto {
+        TimeEntryDto(date: date, startTime: start, endTime: end, breakMinutes: pause, status: status)
+    }
+
+    private func timeline(
+        _ entries: [TimeEntryDto], _ dto: TimeClockStatusDto? = nil, now: Double, target: Int? = 420
+    ) -> DayTimeline? {
+        let current = at(now)
+        return DayTimeline(
+            entries: entries, snapshot: dto.map { makeSnapshot($0, fetchedAt: current) },
+            summary: WorkSummaryResponse(commitmentMinutes: target), now: current, calendar: Self.calendar
+        )
+    }
+
+    @Test func savedEntryGapAndRunningShift() throws {
+        let t = try #require(timeline(
+            [entry("08:00", "12:00", pause: 30)], makeDTO(.running, start: millis(12.5)), now: 15
+        ))
+        #expect(t.start == at(8))
+        #expect(t.plannedEnd == at(15.5))   // 7 h + 30 min required break
+        #expect(t.end == at(15.5))
+        #expect(!t.isOverrun)
+        #expect(t.segments == [
+            .init(kind: .work, start: at(8), end: at(9.75)),
+            .init(kind: .pause, start: at(9.75), end: at(10.25)),
+            .init(kind: .work, start: at(10.25), end: at(12)),
+            .init(kind: .untracked, start: at(12), end: at(12.5)),
+            .init(kind: .work, start: at(12.5), end: at(15)),
+        ])
+    }
+
+    @Test func overrunExtendsToNowWithMarker() throws {
+        let t = try #require(timeline([], makeDTO(.running, start: millis(8)), now: 16))
+        #expect(t.isOverrun)
+        #expect(t.end == at(16))
+        #expect(t.fraction(t.plannedEnd) == 7.5 / 8)
+    }
+
+    @Test func clockedOutEndsAtLastClockOut() throws {
+        let t = try #require(timeline([entry("08:00", "17:00", pause: 30)], makeDTO(.idle), now: 20))
+        #expect(t.end == at(17))
+        #expect(t.isOverrun)
+    }
+
+    @Test func currentBreakIsExactAtTheEnd() throws {
+        let t = try #require(timeline([], makeDTO(.paused, breakElapsed: 600, start: millis(8)), now: 12))
+        #expect(t.segments == [
+            .init(kind: .work, start: at(8), end: at(11) + 50 * 60),
+            .init(kind: .pause, start: at(11) + 50 * 60, end: at(12)),
+        ])
+    }
+
+    @Test func otherDaysRejectedAndNoTargetAreIgnored() {
+        #expect(timeline([entry("08:00", "12:00", date: "2027-01-14")], now: 13) == nil)
+        #expect(timeline([entry("08:00", "12:00", status: "rejected")], now: 13) == nil)
+        #expect(timeline([entry("08:00", "12:00")], now: 13, target: nil) == nil)
+        #expect(timeline([entry("08:00", "12:00")], now: 13, target: 0) == nil)
+    }
+
+    @Test func requiredBreakFollowsArbZG() {
+        #expect(DayTimeline.requiredBreak(forWork: 6 * 3600) == 0)
+        #expect(DayTimeline.requiredBreak(forWork: 7 * 3600) == 30 * 60)
+        #expect(DayTimeline.requiredBreak(forWork: 9.5 * 3600) == 45 * 60)
     }
 }
