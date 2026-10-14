@@ -1,0 +1,56 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      # No signing secrets needed: Config/Signing.xcconfig signs ad hoc by default.
+      - name: Build and test
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project TimebutlerToolbar.xcodeproj \
+            -scheme TimebutlerToolbar \
+            -destination 'platform=macOS' \
+            -derivedDataPath build \
+            -resultBundlePath build/TestResults.xcresult \
+            | tee build/xcodebuild.log
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            build/TestResults.xcresult
+            build/xcodebuild.log
+          retention-days: 7

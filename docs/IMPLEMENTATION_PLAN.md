@@ -2,7 +2,7 @@
 
 A native macOS menu bar app (Swift 6, SwiftUI) for a single employee to use the Timebutler time clock ("Stempeluhr") via the Timebutler API v2 with a personal access token.
 
-The full OpenAPI spec is saved at `docs/timebutler-openapi.json`. This document is the source of truth wherever it disagrees with the spec, because some behaviour below was **verified against the live API** and differs from the docs.
+This was the design document the app was built from. The official API documentation is linked from Timebutler's website; this document is the source of truth wherever it disagrees with the official spec, because some behaviour below was **verified against the live API** and differs from the docs.
 
 ---
 
@@ -12,7 +12,7 @@ The full OpenAPI spec is saved at `docs/timebutler-openapi.json`. This document 
 |---|---|
 | Platform | macOS 15.0+ deployment target (dev machine: macOS 26.6, Xcode 27, Swift 6.4). Apple Silicon. |
 | Project | XcodeGen (`project.yml`, installed at `/opt/homebrew/bin/xcodegen`). The generated `.xcodeproj` is git-ignored. |
-| Signing | Automatic signing, team `<TEAM_ID>`. Build with `-allowProvisioningUpdates`. Bundle ID `de.lochimbaum.TimebutlerToolbar`. |
+| Signing | Ad-hoc by default via `Config/Signing.xcconfig`; your own team goes in the git-ignored `Config/Local.xcconfig` (see the README). Bundle ID `de.lochimbaum.TimebutlerToolbar`. |
 | UI language | **German only**. All user-facing strings are German; code and comments are English. |
 | Menu bar label | SF Symbol plus net working time as `H:MM` (e.g. `3:42`) while running, paused or waiting. Icon only when idle. |
 | Token | Pasted into a Settings window, validated against the API, and stored in the **Keychain**. Never in UserDefaults, never logged. |
@@ -135,7 +135,7 @@ README.md
 - `name: TimebutlerToolbar`, `options.deploymentTarget.macOS: "15.0"`, `bundleIdPrefix: de.lochimbaum`.
 - App target `TimebutlerToolbar`, type `application`, platform `macOS`. Settings:
   - `PRODUCT_BUNDLE_IDENTIFIER=de.lochimbaum.TimebutlerToolbar`
-  - `DEVELOPMENT_TEAM=<TEAM_ID>`, `CODE_SIGN_STYLE=Automatic`
+  - Signing settings come from `Config/Signing.xcconfig` (see above)
   - `SWIFT_VERSION=6.0`, `SWIFT_STRICT_CONCURRENCY=complete`
   - `ENABLE_HARDENED_RUNTIME=YES`
   - `MARKETING_VERSION=1.0.0`, `CURRENT_PROJECT_VERSION=1`

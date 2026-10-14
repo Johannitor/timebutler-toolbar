@@ -18,12 +18,15 @@ targets:
     info:
       path: TimebutlerToolbar/App/Info.plist
       properties:
-        CFBundleDisplayName: Timebutler
+        CFBundleDisplayName: Timebutler Toolbar
         CFBundleName: TimebutlerToolbar
         LSUIElement: true
         LSApplicationCategoryType: public.app-category.productivity
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+    configFiles:
+      Debug: Config/Signing.xcconfig
+      Release: Config/Signing.xcconfig
     entitlements:
       path: TimebutlerToolbar/App/TimebutlerToolbar.entitlements
       properties:
@@ -32,7 +35,6 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: de.lochimbaum.TimebutlerToolbar
-        CODE_SIGN_STYLE: Automatic
         ENABLE_HARDENED_RUNTIME: YES
         MARKETING_VERSION: 1.0.0
         CURRENT_PROJECT_VERSION: 1
@@ -44,11 +46,13 @@ targets:
       - TimebutlerToolbarTests
     dependencies:
       - target: TimebutlerToolbar
+    configFiles:
+      Debug: Config/Signing.xcconfig
+      Release: Config/Signing.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: de.lochimbaum.TimebutlerToolbarTests
         GENERATE_INFOPLIST_FILE: YES
-        CODE_SIGN_STYLE: Automatic
 schemes:
   TimebutlerToolbar:
     build:
