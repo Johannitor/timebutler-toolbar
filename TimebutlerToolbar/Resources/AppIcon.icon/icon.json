@@ -1,0 +1,56 @@
+{
+  "fill": {
+    "automatic-gradient": "extended-srgb:0.10196,0.36078,0.86275,1.00000"
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "hand.svg",
+          "name": "hand",
+          "fill-specializations": [
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "extended-srgb:1.00000,1.00000,1.00000,1.00000"
+              }
+            }
+          ]
+        },
+        {
+          "image-name": "progress.svg",
+          "name": "progress"
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    },
+    {
+      "layers": [
+        {
+          "image-name": "stopwatch.svg",
+          "name": "stopwatch"
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.3
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}

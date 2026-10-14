@@ -1,3 +1,5 @@
+<img src="docs/images/icon.png" alt="" width="128" height="128" align="right">
+
 # Timebutler Toolbar
 
 [![Tests](https://github.com/Johannitor/timebutler-toolbar/actions/workflows/tests.yml/badge.svg)](https://github.com/Johannitor/timebutler-toolbar/actions/workflows/tests.yml)
@@ -87,6 +89,7 @@ The tests use Swift Testing and rely only on mocks: they never call the real API
 | `TimebutlerToolbar/Storage/` | Keychain token storage |
 | `TimebutlerToolbar/UI/` | Thin SwiftUI views (menu bar label, panel, settings) |
 | `TimebutlerToolbarTests/` | Unit tests |
+| `TimebutlerToolbar/Resources/AppIcon.icon` | App icon (Icon Composer; open it in Icon Composer to edit) |
 | `Config/` | Signing configuration |
 | `docs/IMPLEMENTATION_PLAN.md` | Original design notes, including API behaviour verified against the live service |
 

@@ -22,6 +22,7 @@ targets:
         CFBundleName: TimebutlerToolbar
         LSUIElement: true
         LSApplicationCategoryType: public.app-category.productivity
+        NSHumanReadableCopyright: "© 2026 Johann Lochbaum. Unofficial app, not affiliated with Timebutler."
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
     configFiles:

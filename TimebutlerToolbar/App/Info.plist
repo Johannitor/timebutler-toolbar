@@ -24,5 +24,7 @@
 	<string>public.app-category.productivity</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>© 2026 Johann Lochbaum. Unofficial app, not affiliated with Timebutler.</string>
 </dict>
 </plist>
