@@ -54,14 +54,115 @@ struct StoreTests {
         #expect(store.menuBarText == "3:42")
     }
 
-    @Test func pausedLabelIsFrozenWithPauseSymbol() async {
+    @Test func pausedLabelIsFrozenWithCoffeeSymbol() async {
         let store = makeStore()
         api.set { $0.pause = .success(makeDTO(.paused, work: 600, breakElapsed: 0)) }
         await store.startBreak()
         clock.now = clock.now.addingTimeInterval(300)
         store.tick()
-        #expect(store.menuBarSymbol == "pause.circle.fill")
+        #expect(store.menuBarSymbol == "cup.and.heat.waves.fill")
         #expect(store.menuBarText == "0:10")
+    }
+
+    // MARK: Automatic break end
+
+    @Test func autoBreakEndsOnlyWhenDue() async {
+        let store = makeStore()
+        api.set { $0.pause = .success(makeDTO(.paused, breakElapsed: 60)) }
+        await store.startBreak(autoEndAfter: 30)
+        #expect(store.autoBreakEnd == clock.now.addingTimeInterval(29 * 60))
+        clock.now = clock.now.addingTimeInterval(29 * 60 - 1)
+        store.tick()
+        await store.endBreakIfDue()
+        #expect(!api.calls.contains("resume"))
+        #expect(scheduler.notified.isEmpty)
+        clock.now = clock.now.addingTimeInterval(2)
+        store.tick()
+        await store.endBreakIfDue()
+        #expect(api.calls.filter { $0 == "resume" }.count == 1)
+        #expect(store.autoBreakEnd == nil)
+        #expect(store.snapshot?.status == .running)
+        #expect(scheduler.notified.count == 1)
+        #expect(scheduler.notified.first?.title == "Pause beendet")
+        #expect(scheduler.notified.first?.body.contains("nach 30 Min.") == true)
+        #expect(scheduler.notified.first?.id.hasPrefix(BreakReminder.identifierPrefix) == false)
+    }
+
+    @Test func plainBreakHasNoAutoEnd() async {
+        let store = makeStore()
+        api.set { $0.pause = .success(makeDTO(.paused)) }
+        await store.startBreak()
+        #expect(store.autoBreakEnd == nil)
+    }
+
+    @Test func manualEndClearsAutoBreak() async {
+        let store = makeStore()
+        api.set { $0.pause = .success(makeDTO(.paused)) }
+        await store.startBreak(autoEndAfter: 45)
+        #expect(store.autoBreakEnd != nil)
+        await store.endBreak()
+        #expect(store.autoBreakEnd == nil)
+    }
+
+    @Test func refreshShowingRunningClearsAutoBreak() async {
+        let store = makeStore()
+        api.set { $0.pause = .success(makeDTO(.paused)) }
+        await store.startBreak(autoEndAfter: 60)
+        api.set { $0.status = [.success(makeDTO(.running))] }
+        await store.refreshStatus(reportErrors: true)
+        #expect(store.autoBreakEnd == nil)
+    }
+
+    @Test func autoBreakIsRestoredFromDefaults() async {
+        let store = makeStore()
+        api.set { $0.pause = .success(makeDTO(.paused)) }
+        await store.startBreak(autoEndAfter: 30)
+        let restored = makeStore()
+        #expect(restored.autoBreakEnd == store.autoBreakEnd)
+        #expect(restored.autoBreakEnd != nil)
+    }
+
+    @Test func nonConnectivityErrorDoesNotRetryAutoEnd() async {
+        let store = makeStore()
+        api.set {
+            $0.pause = .success(makeDTO(.paused))
+            $0.resume = .failure(.conflict(.resume))
+            $0.status = [.success(makeDTO(.paused))]
+        }
+        await store.startBreak(autoEndAfter: 30)
+        clock.now = clock.now.addingTimeInterval(31 * 60)
+        store.tick()
+        await store.endBreakIfDue()
+        await store.endBreakIfDue()
+        #expect(api.calls.filter { $0 == "resume" }.count == 1)
+        #expect(store.autoBreakEnd == nil)
+        #expect(scheduler.notified.isEmpty)
+    }
+
+    @Test func connectivityErrorKeepsAutoEndForRetry() async {
+        let store = makeStore()
+        api.set {
+            $0.pause = .success(makeDTO(.paused))
+            $0.resume = .failure(.network(.notConnectedToInternet))
+            $0.status = [.failure(.network(.notConnectedToInternet))]
+        }
+        await store.startBreak(autoEndAfter: 30)
+        let end = store.autoBreakEnd
+        clock.now = clock.now.addingTimeInterval(31 * 60)
+        store.tick()
+        await store.endBreakIfDue()
+        #expect(store.autoBreakEnd == end)
+    }
+
+    @Test func disablingAutoBreakClearsPendingEnd() async {
+        let store = makeStore()
+        #expect(store.autoBreakEnabled == false)
+        store.autoBreakEnabled = true
+        api.set { $0.pause = .success(makeDTO(.paused)) }
+        await store.startBreak(autoEndAfter: 30)
+        #expect(store.autoBreakEnd != nil)
+        store.autoBreakEnabled = false
+        #expect(store.autoBreakEnd == nil)
     }
 
     @Test func conflictShowsMessageAndRefreshesStatus() async {
@@ -291,10 +392,25 @@ struct StoreTests {
         api.set { $0.start = .success(makeDTO(.running, work: 5 * 3600)) }
         await store.clockIn()
         try? await Task.sleep(for: .milliseconds(50))
-        #expect(scheduler.applied.last?.map(\.id) == ["break-6h-1000000", "break-9h-1000000"])
+        #expect(scheduler.applied.last?.map(\.id) == ["break-6h-1000000", "break-9h-1000000", "shift-10h-1000000"])
 
         store.breakReminderEnabled = false
         try? await Task.sleep(for: .milliseconds(50))
+        #expect(scheduler.applied.last?.map(\.id) == ["shift-10h-1000000"])
+
+        store.maxWorkReminderEnabled = false
+        try? await Task.sleep(for: .milliseconds(50))
         #expect(scheduler.applied.last?.isEmpty == true)
+    }
+
+    @Test func workSummaryAddsTargetReminder() async {
+        let store = makeStore()
+        api.set { $0.start = .success(makeDTO(.running, work: 3600)) }
+        await store.clockIn()
+        await store.refreshWorkSummary()
+        await settle()
+        // Mock summary: 420 min target, 100 min saved; 60 min in this shift.
+        let target = scheduler.applied.last?.first { $0.id == "shift-target-1000000" }
+        #expect(target?.fireIn == TimeInterval((420 - 100 - 60) * 60))
     }
 }

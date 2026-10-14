@@ -26,6 +26,16 @@ enum BreakReminder {
     static let leadTime: TimeInterval = 15 * 60
 
     static let identifierPrefix = "break-"
+    /// Prefix for the "break ended automatically" notice; deliberately outside the planned prefixes,
+    /// so replacing the planned reminders never removes it.
+    static let autoBreakEndedPrefix = "autobreak-ended-"
+
+    /// Prefixes of all reminders managed through `ReminderScheduler.apply` (break and shift end reminders).
+    static let plannedPrefixes = [identifierPrefix, ShiftEndReminder.identifierPrefix]
+
+    static func isPlanned(_ id: String) -> Bool {
+        plannedPrefixes.contains { id.hasPrefix($0) }
+    }
 
     static func requestID(startTimestamp: Int64, rule: Rule) -> String {
         "\(rule.id)-\(startTimestamp)"
@@ -70,13 +80,68 @@ enum BreakReminder {
     }
 }
 
+/// Shift end reminders: daily target reached, and the ArbZG §3 maximum of 10 hours approaching.
+/// Both count today's saved work (work summary) plus the running shift.
+enum ShiftEndReminder {
+    static let identifierPrefix = "shift-"
+    static let maxWorkHours = 10
+    static var maxWork: TimeInterval { TimeInterval(maxWorkHours * 3600) }
+
+    static func plan(
+        snapshot: ShiftSnapshot?, summary: WorkSummaryResponse?, now: Date,
+        targetEnabled: Bool, maxEnabled: Bool, delivered: Set<String>
+    ) -> [ScheduledReminder] {
+        guard let snapshot, snapshot.status == .running else { return [] }
+        let start = snapshot.dto.startTimestamp ?? 0
+        let saved = TimeInterval((summary?.workedMinutes ?? 0) * 60)
+        let worked = saved + snapshot.netWork(at: now)
+        var reminders: [ScheduledReminder] = []
+
+        // Target: only if it is not already met by saved entries before this shift.
+        if targetEnabled, let minutes = summary?.commitmentMinutes, minutes > 0, saved < TimeInterval(minutes * 60) {
+            let target = TimeInterval(minutes * 60)
+            let key = "\(identifierPrefix)target-\(start)"
+            if let fireIn = fireIn(target - worked, key: key, delivered: delivered) {
+                reminders.append(ScheduledReminder(
+                    id: key,
+                    fireIn: fireIn,
+                    title: "Sollzeit erreicht",
+                    body: "Du hast dein Soll von \(DurationFormatting.hmm(target)) h für heute erreicht und kannst ausstempeln."
+                ))
+            }
+        }
+
+        if maxEnabled, worked < maxWork {
+            let key = "\(identifierPrefix)\(maxWorkHours)h-\(start)"
+            if let fireIn = fireIn(maxWork - BreakReminder.leadTime - worked, key: key, delivered: delivered) {
+                let minutesLeft = max(1, Int(((maxWork - worked - fireIn) / 60).rounded(.up)))
+                reminders.append(ScheduledReminder(
+                    id: key,
+                    fireIn: fireIn,
+                    title: "Höchstarbeitszeit bald erreicht",
+                    body: "In \(minutesLeft) \(minutesLeft == 1 ? "Minute" : "Minuten") erreichst du \(maxWorkHours) Stunden Arbeitszeit, die gesetzliche Höchstgrenze. Bitte rechtzeitig ausstempeln."
+                ))
+            }
+        }
+        return reminders
+    }
+
+    /// Fire delay; a passed fire point reminds right away, unless that was already done for this shift.
+    private static func fireIn(_ delay: TimeInterval, key: String, delivered: Set<String>) -> TimeInterval? {
+        if delay > 0 { return delay }
+        return delivered.contains(key) ? nil : 1
+    }
+}
+
 /// Schedules the planned reminders with the system.
 @MainActor
 protocol ReminderScheduler: AnyObject {
-    /// Identifiers of break reminders the system still holds as pending.
+    /// Identifiers of planned (break and shift end) reminders the system still holds as pending.
     func pendingIdentifiers() async -> Set<String>
-    /// Replaces all pending break reminders. Returns `false` if notifications are not allowed.
+    /// Replaces all pending planned reminders. Returns `false` if notifications are not allowed.
     func apply(_ reminders: [ScheduledReminder]) async -> Bool
+    /// Delivers a one-off notification right away (if notifications are allowed).
+    func notify(_ notice: ScheduledReminder) async
     func requestAuthorization() async -> Bool
 }
 
@@ -88,7 +153,7 @@ final class UserNotificationScheduler: ReminderScheduler {
 
     func pendingIdentifiers() async -> Set<String> {
         let requests = await UNUserNotificationCenter.current().pendingNotificationRequests()
-        return Set(requests.map(\.identifier).filter { $0.hasPrefix(BreakReminder.identifierPrefix) })
+        return Set(requests.map(\.identifier).filter(BreakReminder.isPlanned))
     }
 
     func apply(_ reminders: [ScheduledReminder]) async -> Bool {
@@ -113,6 +178,18 @@ final class UserNotificationScheduler: ReminderScheduler {
             try? await center.add(UNNotificationRequest(identifier: reminder.id, content: content, trigger: trigger))
         }
         return true
+    }
+
+    func notify(_ notice: ScheduledReminder) async {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        guard [.authorized, .provisional].contains(settings.authorizationStatus) else { return }
+        let content = UNMutableNotificationContent()
+        content.title = notice.title
+        content.body = notice.body
+        content.sound = .default
+        // A nil trigger delivers immediately.
+        try? await center.add(UNNotificationRequest(identifier: notice.id, content: content, trigger: nil))
     }
 }
 

@@ -12,7 +12,7 @@ struct ShiftPanel: View {
             } else {
                 HeaderSection()
                 if let snapshot = store.snapshot {
-                    TimeSection(snapshot: snapshot, now: store.now)
+                    TimeSection(snapshot: snapshot, now: store.now, autoBreakEnd: store.autoBreakEnd)
                 } else {
                     Text("Lade Status…").foregroundStyle(.secondary)
                 }
@@ -119,6 +119,7 @@ private struct HeaderSection: View {
 private struct TimeSection: View {
     let snapshot: ShiftSnapshot
     let now: Date
+    let autoBreakEnd: Date?
 
     var body: some View {
         if snapshot.isActive {
@@ -138,6 +139,9 @@ private struct TimeSection: View {
                     if snapshot.status == .paused {
                         let since = snapshot.breakStart.map { DurationFormatting.clockTime($0) + " " } ?? ""
                         row("In Pause seit", "\(since)(\(DurationFormatting.mss(snapshot.currentBreak(at: now))))")
+                    }
+                    if snapshot.status == .paused, let end = autoBreakEnd {
+                        row("Endet automatisch", "\(DurationFormatting.clockTime(end)) (noch \(DurationFormatting.mss(max(0, end.timeIntervalSince(now)))))")
                     }
                     if let wait = snapshot.waitRemaining(at: now) {
                         row("Wartezeit", DurationFormatting.mss(wait))
@@ -204,9 +208,15 @@ private struct ActionSection: View {
                     primary("Einstempeln", terminalOnly: dto?.startOnlyOnTerminal == true) { await store.clockIn() }
                 case .running:
                     primary("Pause starten", terminalOnly: dto?.pauseOnlyOnTerminal == true) { await store.startBreak() }
+                    if store.autoBreakEnabled { autoBreakRow(terminalOnly: dto?.pauseOnlyOnTerminal == true) }
                     secondaryButtons(dto)
                 case .paused:
                     primary("Pause beenden", terminalOnly: dto?.pauseOnlyOnTerminal == true) { await store.endBreak() }
+                    if store.autoBreakEnd != nil {
+                        Button("Automatisches Ende aufheben") { store.cancelAutoBreak() }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                    }
                     secondaryButtons(dto)
                 case .waiting:
                     secondaryButtons(dto)
@@ -225,6 +235,21 @@ private struct ActionSection: View {
             .controlSize(.large)
             .disabled(terminalOnly)
             .help(terminalOnly ? "Nur am Terminal möglich" : "")
+    }
+
+    private func autoBreakRow(terminalOnly: Bool) -> some View {
+        HStack(spacing: 6) {
+            Text("Auto-Pause").font(.caption).foregroundStyle(.secondary)
+            ForEach(ShiftStore.autoBreakMinutes, id: \.self) { minutes in
+                Button { Task { await store.startBreak(autoEndAfter: minutes) } } label: {
+                    Text("\(minutes) Min").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+            }
+        }
+        .disabled(terminalOnly)
+        .help(terminalOnly ? "Nur am Terminal möglich" : "")
     }
 
     @ViewBuilder

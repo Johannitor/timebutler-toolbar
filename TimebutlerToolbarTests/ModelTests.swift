@@ -227,3 +227,47 @@ struct ReminderPlanTests {
         #expect(result[0].fireIn == 35 * 60)
     }
 }
+
+struct ShiftEndPlanTests {
+    private func plan(
+        _ dto: TimeClockStatusDto, worked: Int = 0, target: Int? = 480,
+        targetEnabled: Bool = true, maxEnabled: Bool = true, delivered: Set<String> = []
+    ) -> [ScheduledReminder] {
+        ShiftEndReminder.plan(
+            snapshot: makeSnapshot(dto), summary: WorkSummaryResponse(commitmentMinutes: target, workedMinutes: worked),
+            now: referenceDate, targetEnabled: targetEnabled, maxEnabled: maxEnabled, delivered: delivered
+        )
+    }
+
+    @Test func schedulesTargetAndMaxCountingSavedWork() {
+        let result = plan(makeDTO(.running, work: 3 * 3600), worked: 120)
+        #expect(result.map(\.id) == ["shift-target-1000000", "shift-10h-1000000"])
+        #expect(result[0].fireIn == 3 * 3600)
+        #expect(result[0].body == "Du hast dein Soll von 8:00 h für heute erreicht und kannst ausstempeln.")
+        #expect(result[1].fireIn == 10 * 3600 - 900 - 5 * 3600)
+        #expect(result[1].body.hasPrefix("In 15 Minuten erreichst du 10 Stunden"))
+    }
+
+    @Test func targetMetBeforeShiftOrMissingIsSkipped() {
+        #expect(plan(makeDTO(.running, work: 600), worked: 480).map(\.id) == ["shift-10h-1000000"])
+        #expect(plan(makeDTO(.running, work: 600), target: nil).map(\.id) == ["shift-10h-1000000"])
+        #expect(plan(makeDTO(.running, work: 600), target: 0).map(\.id) == ["shift-10h-1000000"])
+    }
+
+    @Test func passedPointFiresImmediatelyOnce() throws {
+        let dto = makeDTO(.running, work: 8 * 3600 + 60)
+        let target = try #require(plan(dto).first { $0.id == "shift-target-1000000" })
+        #expect(target.fireIn == 1)
+        #expect(plan(dto, delivered: [target.id]).contains { $0.id == target.id } == false)
+    }
+
+    @Test func maxReachedIsSkipped() {
+        #expect(plan(makeDTO(.running, work: 10 * 3600), target: nil).isEmpty)
+    }
+
+    @Test func notScheduledWhenPausedOrDisabled() {
+        #expect(plan(makeDTO(.paused, work: 3600)).isEmpty)
+        #expect(plan(makeDTO(.running, work: 3600), targetEnabled: false, maxEnabled: false).isEmpty)
+        #expect(plan(makeDTO(.running, work: 3600), targetEnabled: false).map(\.id) == ["shift-10h-1000000"])
+    }
+}

@@ -102,6 +102,8 @@ final class MockScheduler: ReminderScheduler {
         pending = Set(reminders.map(\.id))
         return allowed
     }
+    private(set) var notified: [ScheduledReminder] = []
+    func notify(_ notice: ScheduledReminder) async { notified.append(notice) }
     func requestAuthorization() async -> Bool { allowed }
 }
 

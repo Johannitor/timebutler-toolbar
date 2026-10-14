@@ -58,9 +58,40 @@ final class ShiftStore {
         }
     }
 
+    var shiftTargetReminderEnabled: Bool {
+        didSet {
+            defaults.set(shiftTargetReminderEnabled, forKey: Self.shiftTargetReminderKey)
+            reminderSettingChanged(enabled: shiftTargetReminderEnabled, oldValue: oldValue)
+        }
+    }
+
+    var maxWorkReminderEnabled: Bool {
+        didSet {
+            defaults.set(maxWorkReminderEnabled, forKey: Self.maxWorkReminderKey)
+            reminderSettingChanged(enabled: maxWorkReminderEnabled, oldValue: oldValue)
+        }
+    }
+
+    /// Opt-in: offers 30/45/60 min breaks that end automatically.
+    var autoBreakEnabled: Bool {
+        didSet {
+            defaults.set(autoBreakEnabled, forKey: Self.autoBreakEnabledKey)
+            if !autoBreakEnabled { clearAutoBreak() }
+        }
+    }
+
+    /// Local time at which the current break is ended automatically.
+    private(set) var autoBreakEnd: Date?
+
     // MARK: Dependencies and internals
 
+    static let autoBreakMinutes = [30, 45, 60]
+    static let autoBreakEnabledKey = "autoBreakEnabled"
+    /// Planned automatic break end: `["shiftStart": Int64, "end": seconds since 1970]`.
+    static let autoBreakKey = "autoBreakEnd"
     static let reminderEnabledKey = "breakReminderEnabled"
+    static let shiftTargetReminderKey = "shiftTargetReminderEnabled"
+    static let maxWorkReminderKey = "maxWorkReminderEnabled"
     /// Request id -> planned fire date (seconds since 1970) of scheduled break reminders.
     static let reminderLedgerKey = "scheduledBreakReminders"
 
@@ -83,6 +114,8 @@ final class ShiftStore {
     @ObservationIgnored private var retryAttempt = 0
     @ObservationIgnored private var summaryDay: Date?
     @ObservationIgnored private var activity: (any NSObjectProtocol)?
+    /// `startTimestamp` of the shift the planned automatic break end belongs to.
+    @ObservationIgnored private var autoBreakShiftStart: Int64?
 
     init(
         api: any TimeClockAPI,
@@ -100,6 +133,15 @@ final class ShiftStore {
         self.nowProvider = nowProvider
         self.now = nowProvider()
         self.breakReminderEnabled = defaults.object(forKey: Self.reminderEnabledKey) as? Bool ?? true
+        self.shiftTargetReminderEnabled = defaults.object(forKey: Self.shiftTargetReminderKey) as? Bool ?? true
+        self.maxWorkReminderEnabled = defaults.object(forKey: Self.maxWorkReminderKey) as? Bool ?? true
+        self.autoBreakEnabled = defaults.object(forKey: Self.autoBreakEnabledKey) as? Bool ?? false
+        if let stored = defaults.dictionary(forKey: Self.autoBreakKey),
+           let shiftStart = (stored["shiftStart"] as? NSNumber)?.int64Value,
+           let end = stored["end"] as? Double {
+            self.autoBreakEnd = Date(timeIntervalSince1970: end)
+            self.autoBreakShiftStart = shiftStart
+        }
 
         var initialError: APIError?
         do {
@@ -168,6 +210,12 @@ final class ShiftStore {
         if let snapshot, snapshot.isActive, snapshot.isStale(at: now), statusTask == nil {
             Task { await refreshStatus(reportErrors: false) }
         }
+        if isAutoBreakDue { Task { await endBreakIfDue() } }
+    }
+
+    private var isAutoBreakDue: Bool {
+        guard let end = autoBreakEnd else { return false }
+        return now >= end && snapshot?.status == .paused && !isBusy
     }
 
     private func restartTicker() {
@@ -178,9 +226,13 @@ final class ShiftStore {
     private func runTicker() async {
         while !Task.isCancelled {
             // Open panel: every second. Closed: only when the label text would change.
-            let delay: TimeInterval = panelVisible
-                ? 1
-                : min(60, (snapshot?.secondsUntilLabelChange(at: nowProvider()) ?? 60) + 0.05)
+            var delay: TimeInterval = 1
+            if !panelVisible {
+                let current = nowProvider()
+                delay = min(60, (snapshot?.secondsUntilLabelChange(at: current) ?? 60) + 0.05)
+                // Wake up in time to end the break automatically.
+                if let end = autoBreakEnd { delay = min(delay, max(0, end.timeIntervalSince(current)) + 0.05) }
+            }
             try? await Task.sleep(for: .seconds(delay))
             if Task.isCancelled { break }
             tick()
@@ -242,7 +294,11 @@ final class ShiftStore {
     func refreshWorkSummary() async {
         guard hasToken else { return }
         summaryDay = nowProvider()
-        if let summary = try? await api.workSummary() { workSummary = summary }
+        if let summary = try? await api.workSummary(), summary != workSummary {
+            workSummary = summary
+            // The target reminder depends on today's saved work.
+            updateReminders()
+        }
     }
 
     func refreshProfile() async {
@@ -269,12 +325,67 @@ final class ShiftStore {
         await perform { applySnapshot(try await api.start()) }
     }
 
-    func startBreak() async {
-        await perform { applySnapshot(try await api.pause()) }
+    /// Starts a break; with `minutes` it is ended automatically after that long.
+    func startBreak(autoEndAfter minutes: Int? = nil) async {
+        await perform {
+            let dto = try await api.pause()
+            applySnapshot(dto)
+            // Anchor on the snapshot's monotonic break length, not on server timestamps.
+            if let minutes, let snapshot, snapshot.status == .paused, let shiftStart = dto.startTimestamp {
+                let current = nowProvider()
+                let end = current.addingTimeInterval(TimeInterval(minutes * 60) - snapshot.currentBreak(at: current))
+                setAutoBreak(end: end, shiftStart: shiftStart)
+            }
+        }
     }
 
     func endBreak() async {
         await perform { applySnapshot(try await api.resume()) }
+    }
+
+    /// Drops the planned automatic end; the break keeps running until ended manually.
+    func cancelAutoBreak() { clearAutoBreak() }
+
+    /// Ends the break once the planned time has passed.
+    func endBreakIfDue() async {
+        guard let end = autoBreakEnd, now >= end, let paused = snapshot, paused.status == .paused, !isBusy else { return }
+        let shiftStart = autoBreakShiftStart
+        let breakMinutes = max(1, Int((paused.currentBreak(at: nowProvider()) / 60).rounded()))
+        // Clear first so the next tick does not trigger it again while the request is running.
+        clearAutoBreak()
+        await endBreak()
+        if lastError == nil, snapshot?.status == .running, let scheduler {
+            await scheduler.notify(ScheduledReminder(
+                id: "\(BreakReminder.autoBreakEndedPrefix)\(shiftStart ?? 0)-\(Int(end.timeIntervalSince1970))",
+                fireIn: 0,
+                title: "Pause beendet",
+                body: "Deine Pause wurde nach \(breakMinutes) Min. automatisch beendet. Die Arbeitszeit läuft wieder."
+            ))
+        }
+        // Offline (e.g. right after wake): keep the plan so the next tick retries.
+        if lastError?.isConnectivityRelated == true,
+           let snapshot, snapshot.status == .paused, snapshot.dto.startTimestamp == shiftStart,
+           let shiftStart {
+            setAutoBreak(end: end, shiftStart: shiftStart)
+        }
+    }
+
+    private func setAutoBreak(end: Date, shiftStart: Int64) {
+        autoBreakEnd = end
+        autoBreakShiftStart = shiftStart
+        defaults.set(
+            ["shiftStart": NSNumber(value: shiftStart), "end": end.timeIntervalSince1970],
+            forKey: Self.autoBreakKey
+        )
+        if started { restartTicker() }
+    }
+
+    private func clearAutoBreak() {
+        guard autoBreakEnd != nil || autoBreakShiftStart != nil else { return }
+        autoBreakEnd = nil
+        autoBreakShiftStart = nil
+        defaults.removeObject(forKey: Self.autoBreakKey)
+        if started { restartTicker() }
     }
 
     func requestClockOut() { pendingAction = .clockOut }
@@ -387,6 +498,7 @@ final class ShiftStore {
         pendingConfirmation = nil
         pendingAction = nil
         lastError = nil
+        clearAutoBreak()
         hasToken = false
         updateReminders()
         updateMenuBar()
@@ -398,6 +510,10 @@ final class ShiftStore {
     private func applySnapshot(_ dto: TimeClockStatusDto) {
         now = nowProvider()
         snapshot = ShiftSnapshot(dto: dto, fetchedAt: now)
+        // Break ended or shift changed elsewhere (manual end, web, terminal, clock-out, cancel).
+        if autoBreakEnd != nil, dto.status != .paused || dto.startTimestamp != autoBreakShiftStart {
+            clearAutoBreak()
+        }
         updateMenuBar()
         updateReminders()
         updateActivity()
@@ -431,7 +547,7 @@ final class ShiftStore {
             text = DurationFormatting.hmm(net)
             switch snapshot.status {
             case .running: symbol = "clock.fill"
-            case .paused: symbol = "pause.circle.fill"
+            case .paused: symbol = "cup.and.heat.waves.fill"
             default: symbol = "hourglass"
             }
             accessibility = "Timebutler: \(snapshot.status.displayName.lowercased()), \(DurationFormatting.spoken(net))"
@@ -454,6 +570,14 @@ final class ShiftStore {
         }
     }
 
+    private func reminderSettingChanged(enabled: Bool, oldValue: Bool) {
+        guard enabled != oldValue else { return }
+        if enabled, let scheduler {
+            Task { notificationsDenied = !(await scheduler.requestAuthorization()) }
+        }
+        updateReminders()
+    }
+
     private func updateReminders() {
         guard let scheduler else { return }
         let previous = reminderTask
@@ -466,6 +590,9 @@ final class ShiftStore {
             let delivered = BreakReminder.deliveredIDs(ledger: ledger, pending: pending, now: current)
             let plan = BreakReminder.plan(
                 snapshot: snapshot, now: current, enabled: breakReminderEnabled, delivered: delivered
+            ) + ShiftEndReminder.plan(
+                snapshot: snapshot, summary: workSummary, now: current,
+                targetEnabled: shiftTargetReminderEnabled, maxEnabled: maxWorkReminderEnabled, delivered: delivered
             )
             // Keep delivered entries and record the new plan; undelivered old entries are replaced.
             var newLedger = ledger.filter { delivered.contains($0.key) }
