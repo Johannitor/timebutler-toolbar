@@ -128,29 +128,32 @@ private struct TimeSection: View {
                     Text(DurationFormatting.hmmss(snapshot.netWork(at: now)))
                         .font(.system(size: 38, weight: .semibold, design: .rounded))
                         .monospacedDigit()
-                    Text("Arbeitszeit (netto)").font(.caption).foregroundStyle(.secondary)
+                    Text(caption).font(.caption).foregroundStyle(.secondary)
                 }
-                Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 4) {
-                    if let start = snapshot.shiftStart {
-                        row("Beginn", DurationFormatting.clockTime(start))
-                    }
-                    row("Brutto (seit Beginn)", DurationFormatting.hmm(snapshot.gross(at: now)))
-                    row("Pausen gesamt", DurationFormatting.hmm(snapshot.totalBreak(at: now)))
-                    if snapshot.status == .paused {
-                        let since = snapshot.breakStart.map { DurationFormatting.clockTime($0) + " " } ?? ""
-                        row("In Pause seit", "\(since)(\(DurationFormatting.mss(snapshot.currentBreak(at: now))))")
-                    }
-                    if snapshot.status == .paused, let end = autoBreakEnd {
-                        row("Endet automatisch", "\(DurationFormatting.clockTime(end)) (noch \(DurationFormatting.mss(max(0, end.timeIntervalSince(now)))))")
-                    }
-                    if let wait = snapshot.waitRemaining(at: now) {
-                        row("Wartezeit", DurationFormatting.mss(wait))
+                // Totals (breaks, gross) are shown in "Heute"; only the live break/wait state is listed here.
+                if snapshot.status == .paused || snapshot.waitRemaining(at: now) != nil {
+                    Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 4) {
+                        if snapshot.status == .paused {
+                            let since = snapshot.breakStart.map { DurationFormatting.clockTime($0) + " " } ?? ""
+                            row("In Pause seit", "\(since)(\(DurationFormatting.mss(snapshot.currentBreak(at: now))))")
+                        }
+                        if snapshot.status == .paused, let end = autoBreakEnd {
+                            row("Endet automatisch", "\(DurationFormatting.clockTime(end)) (noch \(DurationFormatting.mss(max(0, end.timeIntervalSince(now)))))")
+                        }
+                        if let wait = snapshot.waitRemaining(at: now) {
+                            row("Wartezeit", DurationFormatting.mss(wait))
+                        }
                     }
                 }
             }
         } else if snapshot.status == .idle {
             Text("Noch nicht eingestempelt.").foregroundStyle(.secondary)
         }
+    }
+
+    private var caption: String {
+        guard let start = snapshot.shiftStart else { return "Arbeitszeit" }
+        return "Arbeitszeit seit \(DurationFormatting.clockTime(start))"
     }
 
     private func row(_ label: String, _ value: String) -> some View {
