@@ -64,6 +64,30 @@ struct StoreTests {
         #expect(store.menuBarText == "0:10")
     }
 
+    @Test func labelAppendsDailyTotalWithEarlierShifts() async {
+        let store = makeStore()
+        api.set { $0.start = .success(makeDTO(.running, work: 30 * 60)) }
+        await store.clockIn()
+        #expect(store.menuBarText == "0:30")
+        // Mock summary: 100 min saved from earlier shifts today.
+        await store.refreshWorkSummary()
+        #expect(store.menuBarText == "0:30 (2:10)")
+        clock.now = clock.now.addingTimeInterval(60)
+        store.tick()
+        #expect(store.menuBarText == "0:31 (2:11)")
+    }
+
+    @Test func labelOmitsDailyTotalForFirstShift() async {
+        let store = makeStore()
+        api.set {
+            $0.start = .success(makeDTO(.running, work: 30 * 60))
+            $0.summary = .success(WorkSummaryResponse(commitmentMinutes: 420, workedMinutes: 0))
+        }
+        await store.clockIn()
+        await store.refreshWorkSummary()
+        #expect(store.menuBarText == "0:30")
+    }
+
     // MARK: Automatic break end
 
     @Test func autoBreakEndsOnlyWhenDue() async {

@@ -298,8 +298,9 @@ final class ShiftStore {
         summaryDay = nowProvider()
         if let summary = try? await api.workSummary(), summary != workSummary {
             workSummary = summary
-            // The target reminder depends on today's saved work.
+            // The target reminder and the label's daily total depend on today's saved work.
             updateReminders()
+            updateMenuBar()
         }
         if let entries = try? await api.timeEntries(), entries != timeEntries { timeEntries = entries }
     }
@@ -549,12 +550,18 @@ final class ShiftStore {
         } else if let snapshot, snapshot.isActive {
             let net = snapshot.netWork(at: now)
             text = DurationFormatting.hmm(net)
+            var spokenTotal = ""
+            // With earlier shifts saved today, append the daily total: "0:30 (1:30)".
+            if let totals = TodayTotals(summary: workSummary, snapshot: snapshot, now: now), totals.workedSeconds > net {
+                text += " (\(DurationFormatting.hmm(totals.workedSeconds)))"
+                spokenTotal = ", heute \(DurationFormatting.spoken(totals.workedSeconds))"
+            }
             switch snapshot.status {
             case .running: symbol = "clock.fill"
             case .paused: symbol = "cup.and.heat.waves.fill"
             default: symbol = "hourglass"
             }
-            accessibility = "Timebutler: \(snapshot.status.displayName.lowercased()), \(DurationFormatting.spoken(net))"
+            accessibility = "Timebutler: \(snapshot.status.displayName.lowercased()), \(DurationFormatting.spoken(net))\(spokenTotal)"
         } else {
             symbol = "clock"
             accessibility = snapshot?.status == .idle ? "Timebutler: nicht eingestempelt" : "Timebutler"
